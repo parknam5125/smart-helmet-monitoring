@@ -1,0 +1,45 @@
+{
+  "appId": "com.smarthelmet.monitor",
+  "productName": "Smart Helmet Monitor",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "out/**/*",
+    "electron/**/*",
+    "public/**/*"
+  ],
+  "mac": {
+    "category": "public.app-category.utilities",
+    "icon": "public/icon.icns",
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      }
+    ]
+  },
+  "win": {
+    "icon": "public/icon.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "linux": {
+    "icon": "public/icon.png",
+    "target": [
+      "AppImage",
+      "deb"
+    ],
+    "category": "Utility"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "installerIcon": "public/icon.ico",
+    "uninstallerIcon": "public/icon.ico"
+  }
+}
