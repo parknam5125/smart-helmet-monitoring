@@ -1,7 +1,0 @@
-fastapi==0.111.0
-uvicorn[standard]==0.30.1
-paho-mqtt==2.1.0
-opencv-python>=4.13.0.92
-ultralytics>=8.4.53
-numpy>=2.0.0
-sounddevice==0.4.7
