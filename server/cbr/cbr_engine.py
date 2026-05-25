@@ -55,7 +55,7 @@ class CBREngine:
         rule_score, factors = self._rule_score(payload, unsafe_duration, repeat_count)
         matched_case, similarity = self._match_case(payload, unsafe_duration, repeat_count)
         case_score = self._risk_to_score(matched_case.expected_risk) * similarity
-        risk_score = max(rule_score, case_score)
+        risk_score = max(rule_score, (rule_score + case_score) / 2)
         risk_level = self._score_to_level(risk_score)
 
         if risk_level == RiskLevel.DANGER:

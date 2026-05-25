@@ -6,6 +6,8 @@ import asyncio
 import base64
 import json
 import logging
+import queue
+import threading
 import time
 from collections import deque
 
@@ -19,12 +21,13 @@ from server.networking.connection_manager import ConnectionManager
 from shared.config import Settings
 from shared.constants import TOPIC_ALL_HEARTBEAT, TOPIC_ALL_TELEMETRY, TOPIC_RISK, topic_for
 from shared.detection.yolo_detector import YoloHelmetDetector
-from shared.models import MonitoringPayload, RiskAssessment
+from shared.models import MonitoringPayload, RiskAssessment, SensorReading
 
 
 LOGGER = logging.getLogger(__name__)
 DETECTION_WINDOW = "Server YOLO Helmet Detection"
 SENSOR_PUBLISH_INTERVAL = 10.0  # seconds between sensor broadcasts
+_YOLO_QUEUE_SIZE = 4            # drop oldest frames if worker falls behind
 
 
 class MQTTSubscriber:
@@ -46,6 +49,10 @@ class MQTTSubscriber:
         self._assessment_cache: dict[str, tuple[float, RiskAssessment]] = {}
         self._sensor_buffer: dict[str, deque[tuple[float, SensorReading]]] = {}
         self._last_sensor_publish: dict[str, float] = {}
+        self._frame_queue: queue.Queue[MonitoringPayload | None] = queue.Queue(
+            maxsize=_YOLO_QUEUE_SIZE
+        )
+        self._worker_thread: threading.Thread | None = None
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
             client_id="safety-server-subscriber",
@@ -56,6 +63,12 @@ class MQTTSubscriber:
         self.client.on_message = self._on_message
 
     def start(self) -> None:
+        self._worker_thread = threading.Thread(
+            target=self._yolo_worker,
+            name="yolo-worker",
+            daemon=True,
+        )
+        self._worker_thread.start()
         self.client.reconnect_delay_set(min_delay=1, max_delay=30)
         self.client.connect_async(
             self.settings.mqtt.host,
@@ -72,6 +85,9 @@ class MQTTSubscriber:
     def stop(self) -> None:
         self.client.loop_stop()
         self.client.disconnect()
+        self._frame_queue.put(None)  # sentinel: worker 종료 신호
+        if self._worker_thread and self._worker_thread.is_alive():
+            self._worker_thread.join(timeout=5.0)
         if self.settings.server.display_enabled:
             try:
                 cv2.destroyWindow(DETECTION_WINDOW)
@@ -107,38 +123,64 @@ class MQTTSubscriber:
 
             raw = message.payload.decode("utf-8")
             payload = MonitoringPayload.from_dict(json.loads(raw))
-            self._detect_payload_frame(payload)
-            assessment = self._assess_payload(payload)
-            row_id = self.db.insert_monitoring_result(payload, assessment)
-            smoothed = self._accumulate_sensor(payload.device_id, payload.sensor)
-            payload_dict = payload.to_dict()
-            payload_dict["sensor"] = (
-                smoothed.to_dict()
-                if smoothed is not None
-                else {"temperature_c": None, "noise_db": None}
-            )
-            event = {
-                "type": "monitoring_update",
-                "log_id": row_id,
-                "payload": payload_dict,
-                "assessment": assessment.to_dict(),
-            }
-            client.publish(
-                topic_for(TOPIC_RISK, payload.device_id),
-                json.dumps(assessment.to_dict(), separators=(",", ":")),
-                qos=self.settings.mqtt.qos,
-            )
-            asyncio.run_coroutine_threadsafe(
-                self.connection_manager.publish(payload.device_id, event),
-                self.loop,
-            )
+            try:
+                self._frame_queue.put_nowait(payload)
+            except queue.Full:
+                # 큐가 꽉 찼으면 가장 오래된 프레임을 버리고 최신 프레임 삽입
+                try:
+                    self._frame_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    self._frame_queue.put_nowait(payload)
+                except queue.Full:
+                    LOGGER.debug("YOLO queue full, dropping frame from %s", payload.device_id)
         except Exception:
             LOGGER.exception("Error while processing MQTT message from %s", message.topic)
+
+    def _yolo_worker(self) -> None:
+        """별도 스레드에서 YOLO 추론, CBR, DB, WebSocket 처리."""
+        while True:
+            payload = self._frame_queue.get()
+            if payload is None:  # sentinel 수신 → 종료
+                break
+            try:
+                self._process_payload(payload)
+            except Exception:
+                LOGGER.exception("Error in YOLO worker for %s", payload.device_id)
+            finally:
+                self._frame_queue.task_done()
+
+    def _process_payload(self, payload: MonitoringPayload) -> None:
+        self._detect_payload_frame(payload)
+        assessment = self._assess_payload(payload)
+        row_id = self.db.insert_monitoring_result(payload, assessment)
+        smoothed = self._accumulate_sensor(payload.device_id, payload.sensor)
+        payload_dict = payload.to_dict()
+        payload_dict["sensor"] = (
+            smoothed.to_dict()
+            if smoothed is not None
+            else {"temperature_c": None, "noise_db": None}
+        )
+        event = {
+            "type": "monitoring_update",
+            "log_id": row_id,
+            "payload": payload_dict,
+            "assessment": assessment.to_dict(),
+        }
+        self.client.publish(
+            topic_for(TOPIC_RISK, payload.device_id),
+            json.dumps(assessment.to_dict(), separators=(",", ":")),
+            qos=self.settings.mqtt.qos,
+        )
+        asyncio.run_coroutine_threadsafe(
+            self.connection_manager.publish(payload.device_id, event),
+            self.loop,
+        )
 
     def _accumulate_sensor(
         self, device_id: str, reading: SensorReading
     ) -> SensorReading | None:
-        """Accumulate sensor readings and return 10-second average every 10 seconds."""
         now = time.monotonic()
         buf = self._sensor_buffer.setdefault(device_id, deque())
         buf.append((now, reading))
