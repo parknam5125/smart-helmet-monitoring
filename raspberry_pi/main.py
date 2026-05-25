@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import signal
 import time
@@ -9,14 +10,13 @@ import time
 import cv2
 
 from raspberry_pi.camera.video_capture import ThreadedVideoCapture
-from raspberry_pi.detection.yolo_detector import YoloHelmetDetector
 from raspberry_pi.networking.gstreamer_streamer import GStreamerStreamer
 from raspberry_pi.networking.mjpeg_server import MjpegStreamServer, SharedFrameBuffer
 from raspberry_pi.networking.mqtt_client import MQTTPublisher
 from raspberry_pi.sensors.audio_sensor import NoiseMeter
 from raspberry_pi.sensors.dht22_sensor import DHT22Sensor
 from shared.config import load_settings
-from shared.models import MonitoringPayload, SensorReading, utc_now_iso
+from shared.models import DetectionStatus, MonitoringPayload, SensorReading, utc_now_iso
 
 
 logging.basicConfig(
@@ -24,6 +24,17 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 LOGGER = logging.getLogger("raspberry_pi.main")
+
+
+def encode_frame_jpeg(frame, quality: int = 80) -> str | None:
+    ok, encoded = cv2.imencode(
+        ".jpg",
+        frame,
+        [int(cv2.IMWRITE_JPEG_QUALITY), quality],
+    )
+    if not ok:
+        return None
+    return base64.b64encode(encoded).decode("ascii")
 
 
 def main() -> None:
@@ -42,12 +53,6 @@ def main() -> None:
         settings.detector.camera_index,
         settings.detector.frame_width,
         settings.detector.frame_height,
-    )
-    detector = YoloHelmetDetector(
-        settings.detector.model_path,
-        settings.detector.confidence_threshold,
-        settings.detector.iou_threshold,
-        settings.detector.image_size,
     )
     dht22 = DHT22Sensor(settings.sensors.dht22_pin, settings.sensors.mock_sensors)
     noise_meter = NoiseMeter(
@@ -85,30 +90,24 @@ def main() -> None:
             gst_streamer.start()
 
         last_publish = 0.0
-        frame_index = 0
-        last_status = None
         publish_interval = 1.0 / settings.detector.publish_hz
 
         last_temperature = None
         last_noise = None
 
-        LOGGER.info("Raspberry Pi monitoring loop started")
+        LOGGER.info("Raspberry Pi camera/sensor publishing loop started")
         while not stop_requested:
             frame = camera.read()
             if frame is None:
                 time.sleep(0.01)
                 continue
 
-            frame_index += 1
-            if last_status is None or frame_index % settings.detector.frame_skip == 0:
-                last_status = detector.detect(frame)
-
-            annotated = detector.draw(frame, last_status)
+            preview = frame.copy()
             overlay = f"T={last_temperature if last_temperature is not None else 'N/A'}C  N={last_noise if last_noise is not None else 'N/A'}dB  FPS={camera.fps:.1f}"
             cv2.putText(
-                annotated,
+                preview,
                 overlay,
-                (10, annotated.shape[0] - 14),
+                (10, preview.shape[0] - 14),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
                 (255, 255, 255),
@@ -116,9 +115,9 @@ def main() -> None:
                 cv2.LINE_AA,
             )
 
-            frame_buffer.update(annotated)
+            frame_buffer.update(preview)
             if gst_streamer:
-                gst_streamer.write(annotated)
+                gst_streamer.write(preview)
 
             now = time.monotonic()
             if now - last_publish >= publish_interval:
@@ -126,10 +125,15 @@ def main() -> None:
                     settings.sensors.temperature_interval_seconds
                 )
                 last_noise = noise_meter.read_db()
+                frame_jpeg_b64 = encode_frame_jpeg(frame)
+                if frame_jpeg_b64 is None:
+                    LOGGER.warning("Skipping telemetry publish because JPEG encoding failed")
+                    continue
+
                 payload = MonitoringPayload(
                     device_id=settings.device_id,
                     timestamp=utc_now_iso(),
-                    detection=last_status,
+                    detection=DetectionStatus(),
                     sensor=SensorReading(
                         temperature_c=last_temperature,
                         noise_db=last_noise,
@@ -144,6 +148,8 @@ def main() -> None:
                             "host": settings.stream.gstreamer_host,
                             "port": settings.stream.gstreamer_port,
                         },
+                        "frame_mime_type": "image/jpeg",
+                        "frame_jpeg_b64": frame_jpeg_b64,
                     },
                 )
                 mqtt.publish_telemetry(payload)
@@ -151,7 +157,7 @@ def main() -> None:
                 last_publish = now
 
             if settings.detector.display_enabled:
-                cv2.imshow("Safety Helmet Monitoring", annotated)
+                cv2.imshow("Safety Helmet Camera Publisher", preview)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
 

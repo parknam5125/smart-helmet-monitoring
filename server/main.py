@@ -1,4 +1,4 @@
-"""Server entry point for MQTT ingestion, CBR, SQLite, and FastAPI."""
+"""Server entry point for MQTT ingestion, server-side YOLO, CBR, SQLite, and FastAPI."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from server.database.db_manager import DatabaseManager
 from server.networking.connection_manager import ConnectionManager
 from server.networking.mqtt_subscriber import MQTTSubscriber
 from shared.config import load_settings
+from shared.detection.yolo_detector import YoloHelmetDetector
 
 
 logging.basicConfig(
@@ -35,19 +36,26 @@ def create_app() -> FastAPI:
         settings.risk,
         cases=load_cases_from_json(settings.risk.case_library_path),
     )
+    detector = YoloHelmetDetector(
+        settings.detector.model_path,
+        settings.detector.confidence_threshold,
+        settings.detector.iou_threshold,
+        settings.detector.image_size,
+    )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         loop = asyncio.get_running_loop()
-        subscriber = MQTTSubscriber(settings, db, cbr, manager, loop)
+        subscriber = MQTTSubscriber(settings, db, cbr, manager, detector, loop)
         app.state.mqtt_subscriber = subscriber
         subscriber.start()
-        LOGGER.info("백엔드 서버 준비 완료")
+        LOGGER.info("Backend server is ready")
         try:
             yield
         finally:
             subscriber.stop()
             db.close()
-            LOGGER.info("백엔드 서버가 종료되었습니다")
+            LOGGER.info("Backend server stopped")
 
     app = FastAPI(
         title="Safety Helmet Monitoring API",
@@ -72,9 +80,9 @@ app = create_app()
 
 if __name__ == "__main__":
     settings = load_settings()
-    print("스마트 안전모 백엔드 서버를 시작합니다.")
-    print(f"API 주소: http://localhost:{settings.server.port}")
-    print("종료하려면 Ctrl+C를 누르세요.")
+    print("Starting safety helmet backend server")
+    print(f"API URL: http://localhost:{settings.server.port}")
+    print("Press Ctrl+C to stop.")
     uvicorn.run(
         app,
         host=settings.server.host,
