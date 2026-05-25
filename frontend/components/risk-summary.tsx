@@ -13,26 +13,26 @@ export function RiskSummary({ helmets }: RiskSummaryProps) {
   const midCount = helmets.filter((h) => h.riskLevel === "MID").length
   const highCount = helmets.filter((h) => h.riskLevel === "HIGH").length
   const total = helmets.length
-  const safetyRate = total > 0 ? ((lowCount / total) * 100).toFixed(0) : "0"
+  const safetyRate = total > 0 ? Math.round((lowCount / total) * 100) : 0
 
   const riskData = [
     {
       level: "LOW" as const,
-      label: "안전",
+      label: "Safe",
       count: lowCount,
       color: "bg-risk-low",
       textColor: "text-risk-low",
     },
     {
       level: "MID" as const,
-      label: "주의",
+      label: "Warning",
       count: midCount,
       color: "bg-risk-medium",
       textColor: "text-risk-medium",
     },
     {
       level: "HIGH" as const,
-      label: "위험",
+      label: "Danger",
       count: highCount,
       color: "bg-risk-high",
       textColor: "text-risk-high",
@@ -42,13 +42,13 @@ export function RiskSummary({ helmets }: RiskSummaryProps) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">위험도 현황</CardTitle>
+        <CardTitle className="text-base">Risk Overview</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="flex items-center gap-4 mb-4">
+        <div className="mb-4 flex items-center gap-4">
           {riskData.map((risk) => (
             <div key={risk.level} className="flex-1 text-center">
-              <div className={cn("text-3xl font-bold mb-1", risk.textColor)}>
+              <div className={cn("mb-1 text-3xl font-bold", risk.textColor)}>
                 {risk.count}
               </div>
               <div className="flex items-center justify-center gap-1.5">
@@ -60,22 +60,22 @@ export function RiskSummary({ helmets }: RiskSummaryProps) {
             </div>
           ))}
         </div>
-        <div className="h-3 bg-secondary rounded-full overflow-hidden flex">
+        <div className="flex h-3 overflow-hidden rounded-full bg-secondary">
           {riskData.map((risk) => (
             <div
               key={risk.level}
-              className={cn("h-full transition-all duration-500", risk.color)}
+              className={cn("h-full transition-all", risk.color)}
               style={{
                 width: `${total > 0 ? (risk.count / total) * 100 : 0}%`,
               }}
             />
           ))}
         </div>
-        <div className="flex justify-between mt-2 text-xs text-muted-foreground">
-          <span>전체 {total}명</span>
+        <div className="mt-2 flex justify-between text-xs text-muted-foreground">
+          <span>Total {total}</span>
           <span>
-            안전율{" "}
-            <span className="text-risk-low font-semibold">{safetyRate}%</span>
+            Safe rate{" "}
+            <span className="font-semibold text-risk-low">{safetyRate}%</span>
           </span>
         </div>
       </CardContent>

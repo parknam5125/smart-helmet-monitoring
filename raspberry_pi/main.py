@@ -6,6 +6,8 @@ import base64
 import logging
 import signal
 import time
+from collections import deque
+from dataclasses import dataclass, field
 
 import cv2
 
@@ -24,6 +26,28 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 LOGGER = logging.getLogger("raspberry_pi.main")
+
+
+@dataclass(slots=True)
+class MovingAverage:
+    window_seconds: float
+    samples: deque[tuple[float, float]] = field(default_factory=deque)
+
+    def add(self, value: float | None) -> float | None:
+        now = time.monotonic()
+        if value is not None:
+            self.samples.append((now, float(value)))
+        self._trim(now)
+        return self.average()
+
+    def average(self) -> float | None:
+        if not self.samples:
+            return None
+        return round(sum(value for _timestamp, value in self.samples) / len(self.samples), 1)
+
+    def _trim(self, now: float) -> None:
+        while self.samples and now - self.samples[0][0] > self.window_seconds:
+            self.samples.popleft()
 
 
 def encode_frame_jpeg(frame, quality: int = 80) -> str | None:
@@ -91,9 +115,13 @@ def main() -> None:
 
         last_publish = 0.0
         publish_interval = 1.0 / settings.detector.publish_hz
+        last_sensor_read = 0.0
+        sensor_read_interval = 1.0
 
         last_temperature = None
         last_noise = None
+        temperature_average = MovingAverage(settings.sensors.smoothing_window_seconds)
+        noise_average = MovingAverage(settings.sensors.smoothing_window_seconds)
 
         LOGGER.info("Raspberry Pi camera/sensor publishing loop started")
         while not stop_requested:
@@ -120,11 +148,16 @@ def main() -> None:
                 gst_streamer.write(preview)
 
             now = time.monotonic()
-            if now - last_publish >= publish_interval:
-                last_temperature = dht22.read_temperature_c(
+            if now - last_sensor_read >= sensor_read_interval:
+                raw_temperature = dht22.read_temperature_c(
                     settings.sensors.temperature_interval_seconds
                 )
-                last_noise = noise_meter.read_db()
+                raw_noise = noise_meter.read_db()
+                last_temperature = temperature_average.add(raw_temperature)
+                last_noise = noise_average.add(raw_noise)
+                last_sensor_read = now
+
+            if now - last_publish >= publish_interval:
                 frame_jpeg_b64 = encode_frame_jpeg(frame)
                 if frame_jpeg_b64 is None:
                     LOGGER.warning("Skipping telemetry publish because JPEG encoding failed")
@@ -148,6 +181,7 @@ def main() -> None:
                             "host": settings.stream.gstreamer_host,
                             "port": settings.stream.gstreamer_port,
                         },
+                        "sensor_smoothing_window_seconds": settings.sensors.smoothing_window_seconds,
                         "frame_mime_type": "image/jpeg",
                         "frame_jpeg_b64": frame_jpeg_b64,
                     },

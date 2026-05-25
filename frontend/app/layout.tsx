@@ -1,21 +1,10 @@
 import type { Metadata } from "next"
-import { Geist, Geist_Mono } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
 
-const geist = Geist({
-  subsets: ["latin"],
-  variable: "--font-geist-sans",
-})
-
-const geistMono = Geist_Mono({
-  subsets: ["latin"],
-  variable: "--font-geist-mono",
-})
-
 export const metadata: Metadata = {
-  title: "스마트 안전모 모니터링",
-  description: "실시간 작업자 안전 모니터링 시스템",
+  title: "Smart Helmet Monitoring",
+  description: "Realtime safety helmet monitoring dashboard",
   generator: "v0.app",
   icons: {
     icon: [
@@ -43,9 +32,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
-      <body
-        className={`${geist.variable} ${geistMono.variable} font-sans antialiased`}
-      >
+      <body className="font-sans antialiased">
         {children}
         <Analytics />
       </body>

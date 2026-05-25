@@ -2,17 +2,21 @@
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { HardHat, RefreshCw, Settings } from "lucide-react"
+import { HardHat, RefreshCw } from "lucide-react"
 import { useState } from "react"
 
 interface DashboardHeaderProps {
   onRefresh?: () => void
-  isConnected?: boolean
+  serverConnected?: boolean
+  piConnected?: boolean
+  piDeviceId?: string | null
 }
 
 export function DashboardHeader({
   onRefresh,
-  isConnected = false,
+  serverConnected = false,
+  piConnected = false,
+  piDeviceId,
 }: DashboardHeaderProps) {
   const [isRefreshing, setIsRefreshing] = useState(false)
 
@@ -25,46 +29,64 @@ export function DashboardHeader({
   return (
     <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-4">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary">
+        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary">
           <HardHat className="h-6 w-6 text-primary-foreground" />
         </div>
         <div>
           <h1 className="text-xl font-bold text-foreground sm:text-2xl">
-            스마트 안전모 모니터링
+            Smart Helmet Monitoring
           </h1>
           <p className="text-sm text-muted-foreground">
-            실시간 작업자 안전 현황
+            Raspberry Pi camera telemetry and server-side helmet detection
           </p>
         </div>
       </div>
-      <div className="flex items-center gap-3">
+
+      <div className="flex flex-wrap items-center gap-3">
         <Badge
           variant="outline"
           className={
-            isConnected
-              ? "bg-risk-low/10 text-risk-low border-risk-low"
-              : "bg-muted text-muted-foreground border-muted-foreground/30"
+            serverConnected
+              ? "border-risk-low bg-risk-low/10 text-risk-low"
+              : "border-muted-foreground/30 bg-muted text-muted-foreground"
           }
         >
           <span
             className={`mr-1.5 h-2 w-2 rounded-full ${
-              isConnected ? "bg-risk-low animate-pulse" : "bg-muted-foreground"
+              serverConnected ? "bg-risk-low" : "bg-muted-foreground"
             }`}
           />
-          {isConnected ? "실시간 연결됨" : "서버 연결 대기 중"}
+          {serverConnected ? "Server connected" : "Server waiting"}
         </Badge>
+
+        <Badge
+          variant="outline"
+          className={
+            piConnected
+              ? "border-risk-low bg-risk-low/10 text-risk-low"
+              : "border-risk-medium/60 bg-risk-medium/10 text-risk-medium"
+          }
+        >
+          <span
+            className={`mr-1.5 h-2 w-2 rounded-full ${
+              piConnected ? "animate-pulse bg-risk-low" : "bg-risk-medium"
+            }`}
+          />
+          {piConnected
+            ? `Pi connected${piDeviceId ? `: ${piDeviceId}` : ""}`
+            : "Pi waiting"}
+        </Badge>
+
         <Button
           variant="outline"
           size="icon"
           onClick={handleRefresh}
           disabled={isRefreshing}
+          aria-label="Refresh"
         >
           <RefreshCw
             className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
           />
-        </Button>
-        <Button variant="outline" size="icon">
-          <Settings className="h-4 w-4" />
         </Button>
       </div>
     </header>

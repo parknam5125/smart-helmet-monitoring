@@ -14,6 +14,7 @@ TOPIC_RISK = "safety/{device_id}/risk"
 TOPIC_HEARTBEAT = "safety/{device_id}/heartbeat"
 TOPIC_COMMAND = "safety/{device_id}/command"
 TOPIC_ALL_TELEMETRY = "safety/+/telemetry"
+TOPIC_ALL_HEARTBEAT = "safety/+/heartbeat"
 
 
 def topic_for(template: str, device_id: str) -> str:

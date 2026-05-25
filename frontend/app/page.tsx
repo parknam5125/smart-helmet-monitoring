@@ -1,11 +1,11 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { AlertTriangle, HardHat, ThermometerSun } from "lucide-react"
 import { DashboardHeader } from "@/components/dashboard-header"
 import { HelmetCard, type RiskLevel } from "@/components/helmet-card"
-import { StatsCard } from "@/components/stats-card"
 import { RiskSummary } from "@/components/risk-summary"
-import { HardHat, AlertTriangle, ThermometerSun } from "lucide-react"
+import { StatsCard } from "@/components/stats-card"
 
 export interface HelmetData {
   id: number
@@ -22,9 +22,16 @@ interface ParsedMonitoringEvent {
   deviceId: string
   helmetOn: boolean
   riskLevel: RiskLevel
-  temperature: number
-  noise: number
+  temperature: number | null
+  noise: number | null
   score: number
+}
+
+interface DeviceStatusEvent {
+  type: "device_status"
+  device_id: string
+  connected: boolean
+  timestamp?: string
 }
 
 const DEMO_DEVICE_IDS = ["DEMO-1001", "DEMO-1002", "DEMO-1003"]
@@ -88,7 +95,6 @@ const wsUrl = (): string => {
 }
 
 const makeDemoHelmet = (index: number): HelmetData => {
-  const now = new Date()
   const wave = Math.sin(Date.now() / 4000 + index)
   const profiles: Array<{
     riskLevel: RiskLevel
@@ -129,7 +135,7 @@ const makeDemoHelmet = (index: number): HelmetData => {
     temperature: Math.round((profile.baseTemp + wave * 0.8) * 10) / 10,
     noise: Math.round(profile.baseNoise + wave * 3),
     score: profile.score,
-    lastUpdate: now.toLocaleTimeString("ko-KR"),
+    lastUpdate: new Date().toLocaleTimeString("ko-KR"),
   }
 }
 
@@ -151,10 +157,6 @@ const normalizeBackendEvent = (value: unknown): ParsedMonitoringEvent | null => 
   const noise = toNumber(
     sensor.noise_db ?? sensor.noise ?? payload.noise_db ?? root.noise_db
   )
-
-  if (temperature === null || noise === null) {
-    return null
-  }
 
   const rawRisk = String(
     assessment.risk_level ??
@@ -184,9 +186,11 @@ const normalizeBackendEvent = (value: unknown): ParsedMonitoringEvent | null => 
 
 export default function DashboardPage() {
   const [helmets, setHelmets] = useState<HelmetData[]>([])
-  const [lastRefresh, setLastRefresh] = useState<string>("")
+  const [lastRefresh, setLastRefresh] = useState("")
   const [mounted, setMounted] = useState(false)
-  const [isConnected, setIsConnected] = useState(false)
+  const [serverConnected, setServerConnected] = useState(false)
+  const [piConnected, setPiConnected] = useState(false)
+  const [piDeviceId, setPiDeviceId] = useState<string | null>(null)
 
   const refreshDemoHelmets = useCallback(() => {
     const demoHelmets = DEMO_DEVICE_IDS.map((_, index) => makeDemoHelmet(index))
@@ -210,8 +214,14 @@ export default function DashboardPage() {
         deviceId: event.deviceId,
         helmetOn: event.helmetOn,
         riskLevel: event.riskLevel,
-        temperature: Math.round(event.temperature * 10) / 10,
-        noise: Math.round(event.noise),
+        temperature:
+          event.temperature !== null
+            ? Math.round(event.temperature * 10) / 10
+            : (existing?.temperature ?? 0),
+        noise:
+          event.noise !== null
+            ? Math.round(event.noise)
+            : (existing?.noise ?? 0),
         score: event.score,
         lastUpdate: now.toLocaleTimeString("ko-KR"),
       }
@@ -241,12 +251,16 @@ export default function DashboardPage() {
       devices
         .map(normalizeBackendEvent)
         .filter((item): item is ParsedMonitoringEvent => item !== null)
-        .forEach(upsertHelmet)
+        .forEach((item) => {
+          setPiConnected(true)
+          setPiDeviceId(item.deviceId)
+          upsertHelmet(item)
+        })
 
-      setIsConnected(true)
+      setServerConnected(true)
     } catch (error) {
       console.error("Failed to fetch latest monitoring data", error)
-      setIsConnected(false)
+      setServerConnected(false)
     }
   }, [upsertHelmet])
 
@@ -271,13 +285,23 @@ export default function DashboardPage() {
       socket = new WebSocket(wsUrl())
 
       socket.onopen = () => {
-        setIsConnected(true)
+        setServerConnected(true)
       }
 
       socket.onmessage = (event) => {
         try {
-          const parsed = normalizeBackendEvent(JSON.parse(event.data))
+          const data = JSON.parse(event.data)
+          if (data?.type === "device_status") {
+            const status = data as DeviceStatusEvent
+            setPiConnected(Boolean(status.connected))
+            setPiDeviceId(status.device_id)
+            return
+          }
+
+          const parsed = normalizeBackendEvent(data)
           if (parsed) {
+            setPiConnected(true)
+            setPiDeviceId(parsed.deviceId)
             upsertHelmet(parsed)
           }
         } catch (error) {
@@ -286,7 +310,7 @@ export default function DashboardPage() {
       }
 
       socket.onclose = () => {
-        setIsConnected(false)
+        setServerConnected(false)
         if (!closedByEffect) {
           reconnectTimer = setTimeout(connect, 3000)
         }
@@ -317,14 +341,19 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-background">
       <main className="container mx-auto p-4 sm:p-6 lg:p-8">
-        <DashboardHeader onRefresh={fetchLatest} isConnected={isConnected} />
+        <DashboardHeader
+          onRefresh={fetchLatest}
+          serverConnected={serverConnected}
+          piConnected={piConnected}
+          piDeviceId={piDeviceId}
+        />
 
         <div className="mt-6 grid gap-4 sm:grid-cols-3">
-          <StatsCard title="전체 헬멧" value={helmets.length} icon={HardHat} />
-          <StatsCard title="위험 상태" value={highRiskCount} icon={AlertTriangle} />
+          <StatsCard title="Devices" value={helmets.length} icon={HardHat} />
+          <StatsCard title="High Risk" value={highRiskCount} icon={AlertTriangle} />
           <StatsCard
-            title="평균 온도"
-            value={`${avgTemperature.toFixed(1)}°C`}
+            title="Avg Temp"
+            value={`${avgTemperature.toFixed(1)} C`}
             icon={ThermometerSun}
           />
         </div>
@@ -334,16 +363,16 @@ export default function DashboardPage() {
         </div>
 
         <div className="mt-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">헬멧 현황</h2>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Helmet Status</h2>
             <span className="text-xs text-muted-foreground">
-              마지막 업데이트: {mounted && lastRefresh ? lastRefresh : "대기 중"}
+              Last update: {mounted && lastRefresh ? lastRefresh : "waiting"}
             </span>
           </div>
 
           {helmets.length === 0 ? (
-            <div className="w-full text-center py-20 text-muted-foreground border rounded-xl">
-              연결된 장비 데이터가 없습니다
+            <div className="w-full rounded-lg border py-20 text-center text-muted-foreground">
+              Waiting for Raspberry Pi data
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

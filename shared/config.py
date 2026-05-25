@@ -55,6 +55,7 @@ class DetectorConfig:
 class SensorConfig:
     dht22_pin: str = "D4"
     temperature_interval_seconds: float = 2.0
+    smoothing_window_seconds: float = 10.0
     audio_sample_rate: int = 16000
     audio_window_seconds: float = 0.25
     mock_sensors: bool = False
@@ -74,6 +75,7 @@ class StreamConfig:
 @dataclass(frozen=True, slots=True)
 class RiskConfig:
     case_library_path: str = "server/cbr/case_library.json"
+    assessment_interval_seconds: float = 1.0
     warning_threshold: float = 35.0
     danger_threshold: float = 70.0
     high_temperature_c: float = 32.0
@@ -91,6 +93,7 @@ class ServerConfig:
     port: int = 8000
     database_path: str = "server/database/safety_monitor.db"
     api_cors_origins: tuple[str, ...] = ("*",)
+    display_enabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +146,9 @@ def load_settings() -> Settings:
             temperature_interval_seconds=max(
                 1.0, _get_float("TEMPERATURE_INTERVAL_SECONDS", 2.0)
             ),
+            smoothing_window_seconds=max(
+                1.0, _get_float("SENSOR_SMOOTHING_WINDOW_SECONDS", 10.0)
+            ),
             audio_sample_rate=_get_int("AUDIO_SAMPLE_RATE", 16000),
             audio_window_seconds=max(0.1, _get_float("AUDIO_WINDOW_SECONDS", 0.25)),
             mock_sensors=_get_bool("MOCK_SENSORS", False),
@@ -160,6 +166,9 @@ def load_settings() -> Settings:
             case_library_path=os.getenv(
                 "CASE_LIBRARY_PATH",
                 "server/cbr/case_library.json",
+            ),
+            assessment_interval_seconds=max(
+                0.1, _get_float("CBR_INTERVAL_SECONDS", 1.0)
             ),
             warning_threshold=_get_float("RISK_WARNING_THRESHOLD", 35.0),
             danger_threshold=_get_float("RISK_DANGER_THRESHOLD", 70.0),
@@ -182,5 +191,6 @@ def load_settings() -> Settings:
                 "DATABASE_PATH", "server/database/safety_monitor.db"
             ),
             api_cors_origins=origins or ("*",),
+            display_enabled=_get_bool("SERVER_DISPLAY_ENABLED", False),
         ),
     )
