@@ -1,1 +1,0 @@
-"""YOLO-based detection package."""
