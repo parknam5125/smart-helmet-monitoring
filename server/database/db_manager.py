@@ -5,34 +5,46 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from shared.models import MonitoringPayload, RiskAssessment
 
 
-SCHEMA_SQL = """
+EXPECTED_MONITORING_LOG_COLUMNS = (
+    "id",
+    "device_id",
+    "payload_timestamp",
+    "temperature_c",
+    "noise_db",
+    "no_helmet_count",
+    "risk_level",
+    "risk_score",
+    "event_summary",
+    "raw_payload",
+    "raw_assessment",
+    "created_at",
+)
+
+TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS monitoring_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id TEXT NOT NULL,
     payload_timestamp TEXT NOT NULL,
-    assessment_timestamp TEXT NOT NULL,
     temperature_c REAL,
     noise_db REAL,
-    person_count INTEGER NOT NULL,
-    helmet_count INTEGER NOT NULL,
     no_helmet_count INTEGER NOT NULL,
-    helmet_detected INTEGER NOT NULL,
     risk_level TEXT NOT NULL,
     risk_score REAL NOT NULL,
-    matched_case_id TEXT,
-    similarity REAL NOT NULL,
     event_summary TEXT NOT NULL,
     raw_payload TEXT NOT NULL,
     raw_assessment TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+"""
 
+INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_monitoring_device_time
 ON monitoring_logs(device_id, payload_timestamp DESC);
 
@@ -52,8 +64,42 @@ class DatabaseManager:
     def initialize(self) -> None:
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.executescript(SCHEMA_SQL)
+            self._ensure_schema()
             self._conn.commit()
+
+    def _ensure_schema(self) -> None:
+        columns = self._monitoring_log_columns()
+        if not columns:
+            self._conn.executescript(TABLE_SQL)
+        elif tuple(columns) != EXPECTED_MONITORING_LOG_COLUMNS:
+            self._migrate_monitoring_logs(columns)
+        self._conn.executescript(INDEX_SQL)
+
+    def _monitoring_log_columns(self) -> list[str]:
+        rows = self._conn.execute("PRAGMA table_info(monitoring_logs)").fetchall()
+        return [str(row["name"]) for row in rows]
+
+    def _migrate_monitoring_logs(self, existing_columns: list[str]) -> None:
+        legacy_table = f"monitoring_logs_legacy_{int(time.time())}"
+        self._conn.execute("DROP INDEX IF EXISTS idx_monitoring_device_time")
+        self._conn.execute("DROP INDEX IF EXISTS idx_monitoring_risk")
+        self._conn.execute(f"ALTER TABLE monitoring_logs RENAME TO {legacy_table}")
+        self._conn.executescript(TABLE_SQL)
+
+        common_columns = [
+            column
+            for column in EXPECTED_MONITORING_LOG_COLUMNS
+            if column in existing_columns
+        ]
+        column_sql = ", ".join(common_columns)
+        self._conn.execute(
+            f"""
+            INSERT INTO monitoring_logs ({column_sql})
+            SELECT {column_sql}
+            FROM {legacy_table}
+            """
+        )
+        self._conn.execute(f"DROP TABLE {legacy_table}")
 
     def insert_monitoring_result(
         self,
@@ -64,27 +110,19 @@ class DatabaseManager:
             cursor = self._conn.execute(
                 """
                 INSERT INTO monitoring_logs (
-                    device_id, payload_timestamp, assessment_timestamp,
-                    temperature_c, noise_db, person_count, helmet_count,
-                    no_helmet_count, helmet_detected, risk_level, risk_score,
-                    matched_case_id, similarity, event_summary,
+                    device_id, payload_timestamp, temperature_c, noise_db,
+                    no_helmet_count, risk_level, risk_score, event_summary,
                     raw_payload, raw_assessment
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload.device_id,
                     payload.timestamp,
-                    assessment.timestamp,
                     payload.sensor.temperature_c,
                     payload.sensor.noise_db,
-                    payload.detection.person_count,
-                    payload.detection.helmet_count,
                     payload.detection.no_helmet_count,
-                    int(payload.detection.helmet_detected),
                     assessment.risk_level.value,
                     assessment.risk_score,
-                    assessment.matched_case_id,
-                    assessment.similarity,
                     assessment.event_summary,
                     json.dumps(payload.to_dict(), ensure_ascii=False),
                     json.dumps(assessment.to_dict(), ensure_ascii=False),
