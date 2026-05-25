@@ -19,11 +19,10 @@ Helmet/
 
 ## 가장 쉬운 데모 실행
 
-Windows 노트북에서:
+Windows 환경:
 
 ```powershell
-cd "C:\Users\parkn\OneDrive\CLOUD\VSCODE\PYTHON\Helmet"
-.\.venv\Scripts\Activate.ps1
+\venv\Scripts\Activate.ps1
 python demo_start.py
 ```
 
