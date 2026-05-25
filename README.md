@@ -1,3 +1,5 @@
+# Notion: https://www.notion.so/P-1-2c7f4b250f3e8083874fcd2dbff04128
+
 # Smart Helmet Monitoring
 
 This project monitors helmet safety with a Raspberry Pi camera/sensor client, a FastAPI backend, MQTT telemetry, server-side YOLO detection, CBR risk analysis, SQLite logging, and a dashboard frontend.
